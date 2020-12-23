@@ -10,10 +10,12 @@ zephyr_library_sources(
   window_vectors.S
   xtensa-asm2-util.S
   xtensa-asm2.c
+  irq_manage.c
   )
 
 zephyr_library_sources_ifndef(CONFIG_ATOMIC_OPERATIONS_C atomic.S)
 zephyr_library_sources_ifdef(CONFIG_XTENSA_USE_CORE_CRT1 crt1.S)
 zephyr_library_sources_ifdef(CONFIG_IRQ_OFFLOAD irq_offload.c)
+zephyr_library_sources_ifdef(CONFIG_THREAD_LOCAL_STORAGE tls.c)
 
 add_subdirectory(startup)

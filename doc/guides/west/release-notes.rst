@@ -1,6 +1,137 @@
 West Release Notes
 ##################
 
+v0.8.0
+******
+
+This is a feature release which changes the manifest schema by adding support
+for a ``path-prefix:`` key in an ``import:`` mapping, along with some other
+features and fixes.
+
+- Manifest import mappings now support a ``path-prefix:`` key, which places
+  the project and its imported repositories in a subdirectory of the workspace.
+  See :ref:`west-manifest-ex3.4` for an example.
+- The west command line application can now also be run using ``python3 -m
+  west``. This makes it easier to run west under a particular Python
+  interpreter without modifying the :envvar:`PATH` environment variable.
+- :ref:`west manifest --path <west-manifest-path>` prints the absolute path to
+  west.yml
+- ``west init`` now supports an ``--mf foo.yml`` option, which initializes the
+  workspace using :file:`foo.yml` instead of :file:`west.yml`.
+- ``west list`` now prints the manifest repository's path using the
+  ``manifest.path`` :ref:`configuration option <west-config>`, which may differ
+  from the ``self: path:`` value in the manifest data. The old behavior is
+  still available, but requires passing a new ``--manifest-path-from-yaml``
+  option.
+- Various Python API changes; see :ref:`west-apis` for details.
+
+v0.7.3
+******
+
+This is a bugfix release.
+
+- Fix an error where a failed import could leave the workspace in an unusable
+  state (see [PR #415](https://github.com/zephyrproject-rtos/west/pull/415) for
+  details)
+
+v0.7.2
+******
+
+This is a bugfix and minor feature release.
+
+- Filter out duplicate extension commands brought in by manifest imports
+- Fix ``west.Manifest.get_projects()`` when finding the manifest repository by
+  path
+
+v0.7.1
+******
+
+This is a bugfix and minor feature release.
+
+- ``west update --stats`` now prints timing for operations which invoke a
+  subprocess, time spent in west's Python process for each project, and total
+  time updating each project.
+- ``west topdir`` always prints a POSIX style path
+- minor console output changes
+
+v0.7.0
+******
+
+The main user-visible feature in west 0.7 is the :ref:`west-manifest-import`
+feature. This allows users to load west manifest data from multiple different
+files, resolving the results into a single logical manifest.
+
+Additional user-visible changes:
+
+- The idea of a "west installation" has been renamed to "west workspace" in
+  this documentation and in the west API documentation. The new term seems to
+  be easier for most people to work with than the old one.
+- West manifests now support a :ref:`schema version
+  <west-manifest-schema-version>`.
+- The "west config" command can now be run outside of a workspace, e.g.
+  to run ``west config --global section.key value`` to set a configuration
+  option's value globally.
+- There is a new :ref:`west topdir <west-multi-repo-misc>` command, which
+  prints the root directory of the current west workspace.
+- The ``west -vv init`` command now prints the git operations being performed,
+  and their results.
+- The restriction that no project can be named "manifest" is now enforced; the
+  name "manifest" is reserved for the manifest repository, and is usable as
+  such in commands like ``west list manifest``, instead of ``west list
+  path-to-manifest-repository`` being the only way to say that
+- It's no longer an error if there is no project named "zephyr". This is
+  part of an effort to make west generally usable for non-Zephyr use cases.
+- Various bug fixes.
+
+The developer-visible changes to the :ref:`west-apis` are:
+
+- west.build and west.cmake: deprecated; this is Zephyr-specific functionality
+  and should never have been part of west. Since Zephyr v1.14 LTS relies on it,
+  it will continue to be included in the distribution, but will be removed
+  when that version of Zephyr is obsoleted.
+- west.commands:
+
+  - WestCommand.requires_installation: deprecated; use requires_workspace instead
+  - WestCommand.requires_workspace: new
+  - WestCommand.has_manifest: new
+  - WestCommand.manifest: this is now settable
+- west.configuration: callers can now identify the workspace directory
+  when reading and writing configuration files
+- west.log:
+
+  - msg(): new
+- west.manifest:
+
+  - The module now uses the standard logging module instead of west.log
+  - QUAL_REFS_WEST: new
+  - SCHEMA_VERSION: new
+  - Defaults: removed
+  - Manifest.as_dict(): new
+  - Manifest.as_frozen_yaml(): new
+  - Manifest.as_yaml(): new
+  - Manifest.from_file() and from_data(): these factory methods are more
+    flexible to use and less reliant on global state
+  - Manifest.validate(): new
+  - ManifestImportFailed: new
+  - ManifestProject: semi-deprecated and will likely be removed later.
+  - Project: the constructor now takes a topdir argument
+  - Project.format() and its callers are removed. Use f-strings instead.
+  - Project.name_and_path: new
+  - Project.remote_name: new
+  - Project.sha() now captures stderr
+  - Remote: removed
+
+West now requires Python 3.6 or later. Additionally, some features may rely on
+Python dictionaries being insertion-ordered; this is only an implementation
+detail in CPython 3.6, but is is part of the language specification as of
+Python 3.7.
+
+v0.6.3
+******
+
+This point release fixes an error in the behavior of the deprecated
+``west.cmake`` module.
+
 v0.6.2
 ******
 

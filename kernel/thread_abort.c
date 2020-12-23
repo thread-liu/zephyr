@@ -21,40 +21,49 @@
 #include <ksched.h>
 #include <sys/__assert.h>
 #include <syscall_handler.h>
+#include <logging/log.h>
+LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
-extern void z_thread_single_abort(struct k_thread *thread);
+FUNC_NORETURN void z_self_abort(void)
+{
+	/* Self-aborting threads don't clean themselves up, we
+	 * have the idle thread for the current CPU do it.
+	 */
+	int key;
+	struct _cpu *cpu;
+
+	/* Lock local IRQs to prevent us from migrating to another CPU
+	 * while we set this up
+	 */
+	key = arch_irq_lock();
+	cpu = _current_cpu;
+	__ASSERT(cpu->pending_abort == NULL, "already have a thread to abort");
+	cpu->pending_abort = _current;
+
+	LOG_DBG("%p self-aborting, handle on idle thread %p",
+		_current, cpu->idle_thread);
+
+	k_thread_suspend(_current);
+	z_swap_irqlock(key);
+	__ASSERT(false, "should never get here");
+	CODE_UNREACHABLE;
+}
 
 #if !defined(CONFIG_ARCH_HAS_THREAD_ABORT)
 void z_impl_k_thread_abort(k_tid_t thread)
 {
-	/* We aren't trying to synchronize data access here (these
-	 * APIs are internally synchronized).  The original lock seems
-	 * to have been in place to prevent the thread from waking up
-	 * due to a delivered interrupt.  Leave a dummy spinlock in
-	 * place to do that.  This API should be revisted though, it
-	 * doesn't look SMP-safe as it stands.
-	 */
-	struct k_spinlock lock = {};
-	k_spinlock_key_t key = k_spin_lock(&lock);
-
-	__ASSERT((thread->base.user_options & K_ESSENTIAL) == 0U,
-		 "essential thread aborted");
+	if (thread == _current && !arch_is_in_isr()) {
+		/* Thread is self-exiting, idle thread on this CPU will do
+		 * the cleanup
+		 */
+		z_self_abort();
+	}
 
 	z_thread_single_abort(thread);
-	z_thread_monitor_exit(thread);
 
-	if (thread == _current && !arch_is_in_isr()) {
-		z_swap(&lock, key);
-	} else {
-		/* Really, there's no good reason for this to be a
-		 * scheduling point if we aren't aborting _current (by
-		 * definition, no higher priority thread is runnable,
-		 * because we're running!).  But it always has been
-		 * and is thus part of our API, and we have tests that
-		 * rely on k_thread_abort() scheduling out of
-		 * cooperative threads.
-		 */
-		z_reschedule(&lock, key);
+	if (!arch_is_in_isr()) {
+		/* Don't need to do this if we're in an ISR */
+		z_reschedule_unlocked();
 	}
 }
 #endif

@@ -20,12 +20,14 @@
 
 set -xe
 
-sanitycheck_options=" --inline-logs -N --timestamps -v"
+twister_options=" --inline-logs -N -v --integration"
 export BSIM_OUT_PATH="${BSIM_OUT_PATH:-/opt/bsim/}"
 if [ ! -d "${BSIM_OUT_PATH}" ]; then
         unset BSIM_OUT_PATH
 fi
 export BSIM_COMPONENTS_PATH="${BSIM_OUT_PATH}/components/"
+export EDTT_PATH="${EDTT_PATH:-../tools/edtt}"
+
 bsim_bt_test_results_file="./bsim_bt_out/bsim_results.xml"
 west_commands_results_file="./pytest_out/west_commands.xml"
 
@@ -44,9 +46,9 @@ function handle_coverage() {
 		# Capture data
 		echo "Running lcov --capture ..."
 		lcov --capture \
-			--directory sanity-out/native_posix/ \
-			--directory sanity-out/nrf52_bsim/ \
-			--directory sanity-out/unit_testing/ \
+			--directory twister-out/native_posix/ \
+			--directory twister-out/nrf52_bsim/ \
+			--directory twister-out/unit_testing/ \
 			--directory bsim_bt_out/ \
 			--output-file lcov.pre.info -q --rc lcov_branch_coverage=1
 
@@ -62,7 +64,7 @@ function handle_coverage() {
 
 		# Cleanup
 		rm lcov.pre.info
-		rm -rf sanity-out out-2nd-pass
+		rm -rf twister-out out-2nd-pass
 
 		# Upload to codecov.io
 		echo "Upload coverage reports to codecov.io"
@@ -70,7 +72,7 @@ function handle_coverage() {
 		rm -f lcov.info
 	fi
 
-	rm -rf sanity-out out-2nd-pass
+	rm -rf twister-out out-2nd-pass
 
 }
 
@@ -92,14 +94,14 @@ function on_complete() {
 	mkdir -p shippable/testresults
 	mkdir -p shippable/codecoverage
 
-	if [ -e ./sanity-out/sanitycheck.xml ]; then
-		echo "Copy ./sanity-out/sanitycheck.xml"
-		cp ./sanity-out/sanitycheck.xml shippable/testresults/
+	if [ -e ./twister-out/twister.xml ]; then
+		echo "Copy ./twister-out/twister.xml"
+		cp ./twister-out/twister.xml shippable/testresults/
 	fi
 
-	if [ -e ./module_tests/sanitycheck.xml ]; then
-		echo "Copy ./module_tests/sanitycheck.xml"
-		cp ./module_tests/sanitycheck.xml \
+	if [ -e ./module_tests/twister.xml ]; then
+		echo "Copy ./module_tests/twister.xml"
+		cp ./module_tests/twister.xml \
 			shippable/testresults/module_tests.xml
 	fi
 
@@ -108,36 +110,31 @@ function on_complete() {
 		cp ${bsim_bt_test_results_file} shippable/testresults/
 	fi
 
-	if [ -e ${west_commands_results_file} ]; then
-		echo "Copy ${west_commands_results_file}"
-		cp ${west_commands_results_file} shippable/testresults
-	fi
-
 	if [ "$matrix" = "1" ]; then
 		echo "Skip handling coverage data..."
 		#handle_coverage
 	else
-		rm -rf sanity-out out-2nd-pass
+		rm -rf twister-out out-2nd-pass
 	fi
 }
 
 function run_bsim_bt_tests() {
 	WORK_DIR=${ZEPHYR_BASE}/bsim_bt_out tests/bluetooth/bsim_bt/compile.sh
 	RESULTS_FILE=${ZEPHYR_BASE}/${bsim_bt_test_results_file} \
-	SEARCH_PATH=tests/bluetooth/bsim_bt/bsim_test_app/tests_scripts \
+	SEARCH_PATH=tests/bluetooth/bsim_bt/ \
 	tests/bluetooth/bsim_bt/run_parallel.sh
 }
 
 function get_tests_to_run() {
-	./scripts/zephyr_module.py --sanitycheck-out module_tests.args
+	./scripts/zephyr_module.py --twister-out module_tests.args
 	./scripts/ci/get_modified_tests.py --commits ${commit_range} > modified_tests.args
 	./scripts/ci/get_modified_boards.py --commits ${commit_range} > modified_boards.args
 
 	if [ -s modified_boards.args ]; then
-		${sanitycheck} ${sanitycheck_options} +modified_boards.args --save-tests test_file_1.txt || exit 1
+		${twister} ${twister_options} +modified_boards.args --save-tests test_file_1.txt || exit 1
 	fi
 	if [ -s modified_tests.args ]; then
-		${sanitycheck} ${sanitycheck_options} +modified_tests.args --save-tests test_file_2.txt || exit 1
+		${twister} ${twister_options} +modified_tests.args --save-tests test_file_2.txt || exit 1
 	fi
 	rm -f modified_tests.args modified_boards.args
 }
@@ -149,7 +146,8 @@ function west_setup() {
 	pushd ..
 	if [ ! -d .west ]; then
 		west init -l ${git_dir}
-		west update
+		west update 1> west.update.log || west update 1> west.update-2.log
+		west forall -c 'git reset --hard HEAD'
 	fi
 	popd
 }
@@ -219,10 +217,13 @@ if [ -n "$main_ci" ]; then
 		commit_range=$range
 	fi
 	source zephyr-env.sh
-	sanitycheck="${ZEPHYR_BASE}/scripts/sanitycheck"
+	twister="${ZEPHYR_BASE}/scripts/twister"
 
 	# Possibly the only record of what exact version is being tested:
 	short_git_log='git log -n 5 --oneline --decorate --abbrev=12 '
+
+	# check what files have changed.
+	SC=`./scripts/ci/what_changed.py --commits ${commit_range}`
 
 	if [ -n "$pull_request_nr" ]; then
 		$short_git_log $remote/${branch}
@@ -230,8 +231,11 @@ if [ -n "$main_ci" ]; then
 		# different location
 # https://stackoverflow.com/questions/3398258/edit-shell-script-while-its-running
 		git rebase $remote/${branch}
+	else
+		SC="full"
 	fi
 	$short_git_log
+
 
 	if [ -n "${BSIM_OUT_PATH}" -a -d "${BSIM_OUT_PATH}" ]; then
 		echo "Build and run BT simulator tests"
@@ -243,20 +247,6 @@ if [ -n "$main_ci" ]; then
 		echo "Skipping BT simulator tests"
 	fi
 
-	if [ "$matrix" = "1" ]; then
-		# Run pytest-based testing for Python in matrix
-		# builder 1.  For now, this is just done for the west
-		# extension commands, but additional directories which
-		# run pytest could go here too.
-		pytest=$(type -p pytest-3 || echo "pytest")
-		mkdir -p $(dirname ${west_commands_results_file})
-		PYTHONPATH=./scripts/west_commands "${pytest}" \
-			  --junitxml=${west_commands_results_file} \
-			  ./scripts/west_commands/tests
-	else
-		echo "Skipping west command tests"
-	fi
-
 	# cleanup
 	rm -f test_file.txt
 	touch test_file_1.txt test_file_2.txt
@@ -266,18 +256,29 @@ if [ -n "$main_ci" ]; then
 		get_tests_to_run
 	fi
 
-	# Save list of tests to be run
-	${sanitycheck} ${sanitycheck_options} --save-tests test_file_3.txt || exit 1
-	cat test_file_1.txt test_file_2.txt test_file_3.txt > test_file.txt
+	if [ "$SC" == "full" ]; then
+		# Save list of tests to be run
+		${twister} ${twister_options} --save-tests test_file_3.txt || exit 1
+	else
+		echo "test,arch,platform,status,extra_args,handler,handler_time,ram_size,rom_size" > test_file_3.txt
+	fi
+
+	# Remove headers from all files but the first one to generate one
+	# single file with only one header row
+	tail -n +2 test_file_2.txt > test_file_2_in.txt
+	tail -n +2 test_file_1.txt > test_file_1_in.txt
+	cat test_file_3.txt test_file_2_in.txt test_file_1_in.txt > test_file.txt
+
+	echo "+++ run twister"
 
 	# Run a subset of tests based on matrix size
-	${sanitycheck} ${sanitycheck_options} --load-tests test_file.txt \
+	${twister} ${twister_options} --load-tests test_file.txt \
 		--subset ${matrix}/${matrix_builds} --retry-failed 3
 
 	# Run module tests on matrix #1
-	if [ "$matrix" = "1" ]; then
+	if [ "$matrix" = "1" -a  "$SC" == "full" ]; then
 		if [ -s module_tests.args ]; then
-			${sanitycheck} ${sanitycheck_options} \
+			${twister} ${twister_options} \
 				+module_tests.args --outdir module_tests
 		fi
 	fi

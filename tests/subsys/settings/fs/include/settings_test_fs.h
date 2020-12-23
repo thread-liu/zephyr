@@ -15,13 +15,13 @@
 #include "settings/settings.h"
 
 #ifdef __cplusplus
-#extern "C" {
+extern "C" {
 #endif
 
-extern u8_t val8;
-extern u16_t val16;
-extern u32_t val32;
-extern u64_t val64;
+extern uint8_t val8;
+extern uint16_t val16;
+extern uint32_t val32;
+extern uint64_t val64;
 
 extern int test_get_called;
 extern int test_set_called;

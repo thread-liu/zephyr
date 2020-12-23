@@ -12,7 +12,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <generated_dts_board.h>
+#include <devicetree.h>
 #include <autoconf.h>
 
 #include <linker/sections.h>
@@ -33,15 +33,15 @@
 #ifdef CONFIG_BOOTLOADER_MCUBOOT
 
 
-#define ROM_BASE (DT_CODE_PARTITION_OFFSET)
-#define ROM_SIZE (DT_CODE_PARTITION_SIZE)
+#define ROM_BASE (DT_REG_ADDR(DT_CHOSEN(zephyr_code_partition)))
+#define ROM_SIZE (DT_REG_SIZE(DT_CHOSEN(zephyr_code_partition)))
 
-#define VECTOR_BASE (ROM_BASE + CONFIG_TEXT_SECTION_OFFSET)
+#define VECTOR_BASE (ROM_BASE + CONFIG_ROM_START_OFFSET)
 
 #else
 
-#define ROM_BASE DT_CODE_PARTITION_OFFSET
-#define ROM_SIZE (DT_CODE_PARTITION_SIZE - VECTOR_SIZE)
+#define ROM_BASE (DT_REG_ADDR(DT_CHOSEN(zephyr_code_partition)))
+#define ROM_SIZE (DT_REG_SIZE(DT_CHOSEN(zephyr_code_partition)) - VECTOR_BASE)
 
 #define VECTOR_BASE (ROM_BASE + ROM_SIZE)
 
@@ -49,15 +49,15 @@
 
 #else
 
-#define ROM_BASE DT_FLASH_BASE_ADDRESS
-#define ROM_SIZE (KB(DT_FLASH_SIZE) - VECTOR_SIZE)
+#define ROM_BASE DT_REG_ADDR(DT_CHOSEN(zephyr_flash))
+#define ROM_SIZE (DT_REG_SIZE(DT_CHOSEN(zephyr_flash)) - VECTOR_SIZE)
 
 #define VECTOR_BASE (ROM_BASE + ROM_SIZE)
 
 #endif
 
-#define RAM_BASE DT_SRAM_BASE_ADDRESS
-#define RAM_SIZE KB(DT_SRAM_SIZE)
+#define RAM_BASE CONFIG_SRAM_BASE_ADDRESS
+#define RAM_SIZE KB(CONFIG_SRAM_SIZE)
 
 MEMORY
     {
@@ -104,10 +104,11 @@ SECTIONS
     SECTION_PROLOGUE(_TEXT_SECTION_NAME,,)
 	{
 
-/* Located in generated directory. This file is populated by the
- * zephyr_linker_sources() Cmake function.
+/* Located in generated directory. This file is populated by calling
+ * zephyr_linker_sources(ROM_START ...). This typically contains the vector
+ * table and debug information.
  */
-#include <snippets-text-start.ld>
+#include <snippets-rom-start.ld>
 
 	_image_text_start = .;
 
@@ -121,6 +122,7 @@ SECTIONS
     _image_rodata_start = .;
 
 #include <linker/common-rom.ld>
+#include <linker/thread-local-storage.ld>
 
     SECTION_PROLOGUE(_RODATA_SECTION_NAME,,)
 	{
@@ -227,10 +229,6 @@ SECTIONS
 
      GROUP_END(RAM)
 
-#ifdef CONFIG_CUSTOM_SECTIONS_LD
-/* Located in project source directory */
-#include <custom-sections.ld>
-#endif
 /* Located in generated directory. This file is populated by the
  * zephyr_linker_sources() Cmake function.
  */

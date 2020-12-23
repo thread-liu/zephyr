@@ -25,14 +25,17 @@ When deciding whether something belongs in Kconfig, it helps to distinguish
 between symbols that have prompts and symbols that don't.
 
 If a symbol has a prompt (e.g. ``bool "Enable foo"``), then the user can change
-the symbol's value in the ``menuconfig`` or ``guiconfig`` interface (or by
-manually editing configuration files). Therefore, only put a prompt on a symbol
-if it makes sense for the user to change its value.
+the symbol's value in the ``menuconfig`` or ``guiconfig`` interface (see
+:ref:`menuconfig`), or by manually editing configuration files. Conversely, a
+symbol without a prompt can never be changed directly by the user, not even by
+manually editing configuration files.
 
-In Zephyr, Kconfig configuration is done after selecting a machine, so in
-general, it does not make sense to put a prompt on a symbol that corresponds to
-a fixed machine-specific setting. Usually, such settings should be handled via
-devicetree (``.dts``) files instead.
+Only put a prompt on a symbol if it makes sense for the user to change its
+value.
+
+Symbols without prompts are called *hidden* or *invisible* symbols, because
+they don't show up in ``menuconfig`` and ``guiconfig``. Symbols that have
+prompts can also be invisible, when their dependencies are not satisfied.
 
 Symbols without prompts can't be configured directly by the user (they derive
 their value from other symbols), so less restrictions apply to them. If some
@@ -43,6 +46,52 @@ without prompts in mind.
 See the `optional prompts`_ section for a way to deal with settings that are
 fixed on some machines and configurable on other machines.
 
+What not to turn into Kconfig options
+*************************************
+
+In Zephyr, Kconfig configuration is done after selecting a target board. In
+general, it does not make sense to use Kconfig for a value that corresponds to
+a fixed machine-specific setting. Usually, such settings should be handled via
+:ref:`devicetree <dt-guide>` instead.
+
+In particular, avoid adding new Kconfig options of the following types:
+
+Options enabling individual devices
+===================================
+
+Existing examples like :option:`CONFIG_SPI_0` and :option:`CONFIG_I2C_1` were
+introduced before Zephyr supported devicetree, and new cases are discouraged.
+See :ref:`dt-create-devices` for details on how to do this with devicetree
+instead.
+
+Options that specify a device in the system by name
+===================================================
+
+For example, if you are writing an I2C device driver, avoid creating an option
+named ``MY_DEVICE_I2C_BUS_NAME`` for specifying the bus node your device is
+controlled by. See :ref:`dt-drivers-that-depend` for alternatives.
+
+Similarly, if your application depends on a hardware-specific PWM device to
+control an RGB LED, avoid creating an option like ``MY_PWM_DEVICE_NAME``. See
+:ref:`dt-apps-that-depend` for alternatives.
+
+Options that specify fixed hardware configuration
+=================================================
+
+For example, avoid Kconfig options specifying a GPIO pin.
+
+An alternative applicable to device drivers is to define a GPIO specifier with
+type phandle-array in the device binding, and using the
+:ref:`devicetree-gpio-api` devicetree API from C. Similar advice applies to
+other cases where devicetree.h provides :ref:`devicetree-hw-api` for referring
+to other nodes in the system. Search the source code for drivers using these
+APIs for examples.
+
+An application-specific devicetree :ref:`binding <dt-bindings>` to identify
+board specific properties may be appropriate. See
+:zephyr_file:`tests/drivers/gpio/gpio_basic_api` for an example.
+
+For applications, see :ref:`blinky-sample` for a devicetree-based alternative.
 
 ``select`` statements
 *********************
@@ -221,7 +270,7 @@ way, without having to look for particular architectures:
 
 .. code-block:: none
 
-   config FLOAT
+   config FPU
    	bool "Support floating point operations"
    	depends on CPU_HAS_FPU
 
@@ -230,7 +279,7 @@ duplicated in several spots:
 
 .. code-block:: none
 
-   config FLOAT
+   config FPU
    	bool "Support floating point operations"
    	depends on SOC_FOO || SOC_BAR || ...
 
@@ -414,6 +463,40 @@ with suggestions:
 It is a good idea to try out changes in the ``menuconfig`` or ``guiconfig``
 interface, to make sure that things behave the way you expect. This is
 especially true when making moderately complex changes like these.
+
+
+Assignments to promptless symbols in configuration files
+********************************************************
+
+Assignments to hidden (promptless, also called *invisible*) symbols in
+configuration files are always ignored. Hidden symbols get their value
+indirectly from other symbols, via e.g. ``default`` and ``select``.
+
+A common source of confusion is opening the output configuration file
+(:file:`zephyr/.config`), seeing a bunch of assignments to hidden symbols,
+and assuming that those assignments must be respected when the configuration is
+read back in by Kconfig. In reality, all assignments to hidden symbols in
+:file:`zephyr/.config` are ignored by Kconfig, like for other configuration
+files.
+
+To understand why :file:`zephyr/.config` still includes assignments to hidden
+symbols, it helps to realize that :file:`zephyr/.config` serves two separate
+purposes:
+
+1. It holds the saved configuration, and
+
+2. it holds configuration output. :file:`zephyr/.config` is parsed by the CMake
+   files to let them query configuration settings, for example.
+
+The assignments to hidden symbols in :file:`zephyr/.config` are just
+configuration output. Kconfig itself ignores assignments to hidden symbols when
+calculating symbol values.
+
+.. note::
+
+   A *minimal configuration*, which can be generated from within the
+   :ref:`menuconfig and guiconfig interfaces <menuconfig>`, could be considered
+   closer to just a saved configuration, without the full configuration output.
 
 
 ``depends on`` and ``string``/``int``/``hex`` symbols
@@ -764,6 +847,10 @@ A few formatting nits, to help keep things consistent:
 - Format comments as ``# Comment`` rather than ``#Comment``
 
 - Put a blank line before/after each top-level ``if`` and ``endif``
+
+- Use a single tab for each indentation
+
+- Indent help text with two extra spaces
 
 
 Lesser-known/used Kconfig features

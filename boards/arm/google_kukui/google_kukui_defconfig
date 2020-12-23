@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Zephyr Kernel Configuration
-CONFIG_ARM=y
 CONFIG_SOC_SERIES_STM32F0X=y
 
 # Platform Configuration
@@ -11,6 +10,9 @@ CONFIG_BOARD_GOOGLE_KUKUI=y
 # Serial Drivers
 CONFIG_SERIAL=y
 CONFIG_UART_INTERRUPT_DRIVEN=y
+
+# I2C support
+CONFIG_I2C=y
 
 # Enable console
 CONFIG_CONSOLE=y

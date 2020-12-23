@@ -17,8 +17,12 @@
  * Accessing load count 2 registers, thus, requires some special treatment.
  */
 
+#define DT_DRV_COMPAT snps_designware_pwm
+
 #include <errno.h>
 
+#include <device.h>
+#include <init.h>
 #include <kernel.h>
 #include <drivers/pwm.h>
 
@@ -56,10 +60,10 @@
 
 struct pwm_dw_config {
 	/** Base address of registers */
-	u32_t	addr;
+	uint32_t	addr;
 
 	/** Number of ports */
-	u32_t	num_ports;
+	uint32_t	num_ports;
 };
 
 /**
@@ -70,10 +74,11 @@ struct pwm_dw_config {
  *
  * @return The base address of that particular timer
  */
-static inline int pwm_dw_timer_base_addr(struct device *dev, u32_t timer)
+static inline int pwm_dw_timer_base_addr(const struct device *dev,
+					 uint32_t timer)
 {
 	const struct pwm_dw_config * const cfg =
-	    (struct pwm_dw_config *)dev->config->config_info;
+	    (const struct pwm_dw_config *)dev->config;
 
 	return (cfg->addr + (timer * REG_OFFSET));
 }
@@ -86,19 +91,20 @@ static inline int pwm_dw_timer_base_addr(struct device *dev, u32_t timer)
  *
  * @return The load count 2 address of that particular timer
  */
-static inline int pwm_dw_timer_ldcnt2_addr(struct device *dev, u32_t timer)
+static inline int pwm_dw_timer_ldcnt2_addr(const struct device *dev,
+					   uint32_t timer)
 {
 	const struct pwm_dw_config * const cfg =
-	    (struct pwm_dw_config *)dev->config->config_info;
+	    (const struct pwm_dw_config *)dev->config;
 
 	return (cfg->addr + REG_TMR_LOAD_CNT2 + (timer * REG_OFFSET_LOAD_CNT2));
 }
 
 
-static int __set_one_port(struct device *dev, u32_t pwm,
-			  u32_t on, u32_t off)
+static int __set_one_port(const struct device *dev, uint32_t pwm,
+			  uint32_t on, uint32_t off)
 {
-	u32_t reg_addr;
+	uint32_t reg_addr;
 
 	reg_addr = pwm_dw_timer_base_addr(dev, pwm);
 
@@ -135,20 +141,26 @@ static int __set_one_port(struct device *dev, u32_t pwm,
  * @param pwm Which PWM pin to set
  * @param period_cycles Period in clock cycles of the pwm.
  * @param pulse_cycles PWM width in clock cycles
+ * @param flags Flags for pin configuration (polarity).
  *
  * @return 0
  */
-static int pwm_dw_pin_set_cycles(struct device *dev,
-			     u32_t pwm, u32_t period_cycles, u32_t pulse_cycles)
+static int pwm_dw_pin_set_cycles(const struct device *dev,
+				 uint32_t pwm, uint32_t period_cycles,
+				 uint32_t pulse_cycles, pwm_flags_t flags)
 {
 	const struct pwm_dw_config * const cfg =
-	    (struct pwm_dw_config *)dev->config->config_info;
-	int i;
-	u32_t on, off;
+	    (const struct pwm_dw_config *)dev->config;
+	uint32_t on, off;
 
 	/* make sure the PWM port exists */
 	if (pwm >= cfg->num_ports) {
 		return -EIO;
+	}
+
+	if (flags) {
+		/* PWM polarity not supported (yet?) */
+		return -ENOTSUP;
 	}
 
 	if (period_cycles == 0U || pulse_cycles > period_cycles) {
@@ -176,24 +188,21 @@ static struct pwm_driver_api pwm_dw_drv_api_funcs = {
  * @param dev Device struct
  * @return 0 if successful, failed otherwise.
  */
-int pwm_dw_init(struct device *dev)
+int pwm_dw_init(const struct device *dev)
 {
 	return 0;
 }
 
 /* Initialization for PWM_DW */
-#if defined(CONFIG_PWM_DW)
-#include <device.h>
-#include <init.h>
+#define SNPS_DW_PWM_INIT(n)							\
+	static struct pwm_dw_config pwm_dw_cfg_##n = {				\
+		.addr = DT_INST_REG_ADDR(n),					\
+		.num_ports = DT_INST_PROP(n, channels),				\
+	};									\
+										\
+	DEVICE_DT_INST_DEFINE(n, pwm_dw_init, device_pm_control_nop,		\
+			      NULL, &pwm_dw_cfg_##n,				\
+			      POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,	\
+			      &pwm_dw_drv_api_funcs);
 
-static struct pwm_dw_config pwm_dw_cfg = {
-	.addr = PWM_DW_BASE_ADDR,
-	.num_ports = PWM_DW_NUM_PORTS,
-};
-
-DEVICE_AND_API_INIT(pwm_dw_0, CONFIG_PWM_DW_0_DRV_NAME, pwm_dw_init,
-		    NULL, &pwm_dw_cfg,
-		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-		    &pwm_dw_drv_api_funcs);
-
-#endif /* CONFIG_PWM_DW */
+DT_INST_FOREACH_STATUS_OKAY(SNPS_DW_PWM_INIT)

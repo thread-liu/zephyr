@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT aosong_dht
+
 #include <device.h>
 #include <drivers/gpio.h>
 #include <sys/byteorder.h>
@@ -21,90 +23,92 @@ LOG_MODULE_REGISTER(DHT, CONFIG_SENSOR_LOG_LEVEL);
  * @brief Measure duration of signal send by sensor
  *
  * @param drv_data Pointer to the driver data structure
- * @param signal_val Value of signal being measured
+ * @param active Whether current signal is active
  *
  * @return duration in usec of signal being measured,
  *         -1 if duration exceeds DHT_SIGNAL_MAX_WAIT_DURATION
  */
-static s8_t dht_measure_signal_duration(struct device *dev,
-					u32_t signal_val)
+static int8_t dht_measure_signal_duration(const struct device *dev,
+	       	                   bool active)
 {
-	struct dht_data *drv_data = dev->driver_data;
-	const struct dht_config *cfg = dev->config->config_info;
-	u32_t val;
-	u32_t elapsed_cycles;
-	u32_t max_wait_cycles = (u32_t)(
-		(u64_t)DHT_SIGNAL_MAX_WAIT_DURATION *
-		(u64_t)sys_clock_hw_cycles_per_sec() /
-		(u64_t)USEC_PER_SEC
+	struct dht_data *drv_data = dev->data;
+	const struct dht_config *cfg = dev->config;
+	uint32_t elapsed_cycles;
+	uint32_t max_wait_cycles = (uint32_t)(
+		(uint64_t)DHT_SIGNAL_MAX_WAIT_DURATION *
+		(uint64_t)sys_clock_hw_cycles_per_sec() /
+		(uint64_t)USEC_PER_SEC
 	);
-	u32_t start_cycles = k_cycle_get_32();
+	uint32_t start_cycles = k_cycle_get_32();
+	int rc;
 
 	do {
-		gpio_pin_read(drv_data->gpio, cfg->pin, &val);
+		rc = gpio_pin_get(drv_data->gpio, cfg->pin);
 		elapsed_cycles = k_cycle_get_32() - start_cycles;
 
-		if (elapsed_cycles > max_wait_cycles) {
+		if ((rc < 0)
+		    || (elapsed_cycles > max_wait_cycles)) {
 			return -1;
 		}
-	} while (val == signal_val);
+	} while ((bool)rc == active);
 
-	return (u64_t)elapsed_cycles *
-	       (u64_t)USEC_PER_SEC /
-	       (u64_t)sys_clock_hw_cycles_per_sec();
+	return (uint64_t)elapsed_cycles *
+	       (uint64_t)USEC_PER_SEC /
+	       (uint64_t)sys_clock_hw_cycles_per_sec();
 }
 
-static int dht_sample_fetch(struct device *dev, enum sensor_channel chan)
+static int dht_sample_fetch(const struct device *dev,
+			    enum sensor_channel chan)
 {
-	struct dht_data *drv_data = dev->driver_data;
-	const struct dht_config *cfg = dev->config->config_info;
+	struct dht_data *drv_data = dev->data;
+	const struct dht_config *cfg = dev->config;
 	int ret = 0;
-	s8_t signal_duration[DHT_DATA_BITS_NUM];
-	s8_t max_duration, min_duration, avg_duration;
-	u8_t buf[5];
+	int8_t signal_duration[DHT_DATA_BITS_NUM];
+	int8_t max_duration, min_duration, avg_duration;
+	uint8_t buf[5];
 	unsigned int i, j;
 
 	__ASSERT_NO_MSG(chan == SENSOR_CHAN_ALL);
 
-	/* send start signal */
-	gpio_pin_write(drv_data->gpio, cfg->pin, 0);
+	/* assert to send start signal */
+	gpio_pin_set(drv_data->gpio, cfg->pin, true);
 
 	k_busy_wait(DHT_START_SIGNAL_DURATION);
 
-	gpio_pin_write(drv_data->gpio, cfg->pin, 1);
+	gpio_pin_set(drv_data->gpio, cfg->pin, false);
 
 	/* switch to DIR_IN to read sensor signals */
 	gpio_pin_configure(drv_data->gpio, cfg->pin,
-			   GPIO_DIR_IN);
+			   GPIO_INPUT | cfg->flags);
 
-	/* wait for sensor response */
-	if (dht_measure_signal_duration(dev, 1) == -1) {
+	/* wait for sensor active response */
+	if (dht_measure_signal_duration(dev, false) == -1) {
 		ret = -EIO;
 		goto cleanup;
 	}
 
 	/* read sensor response */
-	if (dht_measure_signal_duration(dev, 0) == -1) {
+	if (dht_measure_signal_duration(dev, true) == -1) {
 		ret = -EIO;
 		goto cleanup;
 	}
 
-	/* wait for sensor data */
-	if (dht_measure_signal_duration(dev, 1) == -1) {
+	/* wait for sensor data start */
+	if (dht_measure_signal_duration(dev, false) == -1) {
 		ret = -EIO;
 		goto cleanup;
 	}
 
 	/* read sensor data */
 	for (i = 0U; i < DHT_DATA_BITS_NUM; i++) {
-		/* LOW signal to indicate a new bit */
-		if (dht_measure_signal_duration(dev, 0) == -1) {
+		/* Active signal to indicate a new bit */
+		if (dht_measure_signal_duration(dev, true) == -1) {
 			ret = -EIO;
 			goto cleanup;
 		}
 
-		/* HIGH signal duration indicates bit value */
-		signal_duration[i] = dht_measure_signal_duration(dev, 1);
+		/* Inactive signal duration indicates bit value */
+		signal_duration[i] = dht_measure_signal_duration(dev, false);
 		if (signal_duration[i] == -1) {
 			ret = -EIO;
 			goto cleanup;
@@ -128,7 +132,7 @@ static int dht_sample_fetch(struct device *dev, enum sensor_channel chan)
 			max_duration = signal_duration[i];
 		}
 	}
-	avg_duration = ((s16_t)min_duration + (s16_t)max_duration) / 2;
+	avg_duration = ((int16_t)min_duration + (int16_t)max_duration) / 2;
 
 	/* store bits in buf */
 	j = 0U;
@@ -154,29 +158,29 @@ static int dht_sample_fetch(struct device *dev, enum sensor_channel chan)
 	}
 
 cleanup:
-	/* switch to DIR_OUT and leave pin to HIGH until next fetch */
-	gpio_pin_configure(drv_data->gpio, cfg->pin, GPIO_DIR_OUT);
-	gpio_pin_write(drv_data->gpio, cfg->pin, 1);
+	/* Switch to output inactive until next fetch. */
+	gpio_pin_configure(drv_data->gpio, cfg->pin,
+			   GPIO_OUTPUT_INACTIVE | cfg->flags);
 
 	return ret;
 }
 
-static int dht_channel_get(struct device *dev,
+static int dht_channel_get(const struct device *dev,
 			   enum sensor_channel chan,
 			   struct sensor_value *val)
 {
-	struct dht_data *drv_data = dev->driver_data;
+	struct dht_data *drv_data = dev->data;
 
 	__ASSERT_NO_MSG(chan == SENSOR_CHAN_AMBIENT_TEMP
 			|| chan == SENSOR_CHAN_HUMIDITY);
 
 	/* see data calculation example from datasheet */
-	if (IS_ENABLED(DT_INST_0_AOSONG_DHT_DHT22)) {
+	if (IS_ENABLED(DT_INST_PROP(0, dht22))) {
 		/*
 		 * use both integral and decimal data bytes; resulted
 		 * 16bit data has a resolution of 0.1 units
 		 */
-		s16_t raw_val, sign;
+		int16_t raw_val, sign;
 
 		if (chan == SENSOR_CHAN_HUMIDITY) {
 			raw_val = (drv_data->sample[0] << 8)
@@ -218,11 +222,11 @@ static const struct sensor_driver_api dht_api = {
 	.channel_get = &dht_channel_get,
 };
 
-static int dht_init(struct device *dev)
+static int dht_init(const struct device *dev)
 {
 	int rc = 0;
-	struct dht_data *drv_data = dev->driver_data;
-	const struct dht_config *cfg = dev->config->config_info;
+	struct dht_data *drv_data = dev->data;
+	const struct dht_config *cfg = dev->config;
 
 	drv_data->gpio = device_get_binding(cfg->ctrl);
 	if (drv_data->gpio == NULL) {
@@ -230,20 +234,19 @@ static int dht_init(struct device *dev)
 		return -EINVAL;
 	}
 
-	rc = gpio_pin_configure(drv_data->gpio, cfg->pin, GPIO_DIR_OUT);
-	if (rc == 0) {
-		rc = gpio_pin_write(drv_data->gpio, cfg->pin, 1);
-	}
+	rc = gpio_pin_configure(drv_data->gpio, cfg->pin,
+				GPIO_OUTPUT_INACTIVE | cfg->flags);
 
 	return rc;
 }
 
 static struct dht_data dht_data;
 static const struct dht_config dht_config = {
-	.ctrl = DT_INST_0_AOSONG_DHT_DIO_GPIOS_CONTROLLER,
-	.pin = DT_INST_0_AOSONG_DHT_DIO_GPIOS_PIN,
+	.ctrl = DT_INST_GPIO_LABEL(0, dio_gpios),
+	.flags = DT_INST_GPIO_FLAGS(0, dio_gpios),
+	.pin = DT_INST_GPIO_PIN(0, dio_gpios),
 };
 
-DEVICE_AND_API_INIT(dht_dev, DT_INST_0_AOSONG_DHT_LABEL, &dht_init,
+DEVICE_DT_INST_DEFINE(0, &dht_init, device_pm_control_nop,
 		    &dht_data, &dht_config,
 		    POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &dht_api);

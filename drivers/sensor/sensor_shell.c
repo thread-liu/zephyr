@@ -9,10 +9,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <device.h>
-#include <sensor.h>
+#include <drivers/sensor.h>
 
-extern struct device __device_init_start[];
-extern struct device __device_init_end[];
+#define SENSOR_GET_HELP \
+	"Get sensor data. Channel names are optional. All channels are read " \
+	"when no channels are provided. Syntax:\n" \
+	"<device_name> <channel name 0> .. <channel name N>"
 
 const char *sensor_channel_name[SENSOR_CHAN_ALL] = {
 	[SENSOR_CHAN_ACCEL_X] =		"accel_x",
@@ -44,152 +46,167 @@ const char *sensor_channel_name[SENSOR_CHAN_ALL] = {
 	[SENSOR_CHAN_DISTANCE] =	"distance",
 	[SENSOR_CHAN_CO2] =		"co2",
 	[SENSOR_CHAN_VOC] =		"voc",
+	[SENSOR_CHAN_GAS_RES] =		"gas_resistance",
 	[SENSOR_CHAN_VOLTAGE] =		"voltage",
 	[SENSOR_CHAN_CURRENT] =		"current",
+	[SENSOR_CHAN_RESISTANCE] =	"resistance",
 	[SENSOR_CHAN_ROTATION] =	"rotation",
+	[SENSOR_CHAN_POS_DX] =		"pos_dx",
+	[SENSOR_CHAN_POS_DY] =		"pos_dy",
+	[SENSOR_CHAN_POS_DZ] =		"pos_dz",
+	[SENSOR_CHAN_RPM] = 		"rpm",
+	[SENSOR_CHAN_GAUGE_VOLTAGE] =	"gauge_voltage",
+	[SENSOR_CHAN_GAUGE_AVG_CURRENT] = "gauge_avg_current",
+	[SENSOR_CHAN_GAUGE_STDBY_CURRENT] = "gauge_stdby_current",
+	[SENSOR_CHAN_GAUGE_MAX_LOAD_CURRENT] = "gauge_max_load_current",
+	[SENSOR_CHAN_GAUGE_TEMP] =	"gauge_temp",
+	[SENSOR_CHAN_GAUGE_STATE_OF_CHARGE] =	"gauge_state_of_charge",
+	[SENSOR_CHAN_GAUGE_FULL_CHARGE_CAPACITY] =	"gauge_full_cap",
+	[SENSOR_CHAN_GAUGE_REMAINING_CHARGE_CAPACITY] = "gauge_remaining_cap",
+	[SENSOR_CHAN_GAUGE_NOM_AVAIL_CAPACITY] =	"gauge_nominal_cap",
+	[SENSOR_CHAN_GAUGE_FULL_AVAIL_CAPACITY] = "gauge_full_cap",
+	[SENSOR_CHAN_GAUGE_AVG_POWER] =		"gauge_avg_power",
+	[SENSOR_CHAN_GAUGE_STATE_OF_HEALTH] =	"gauge_state_of_health",
+	[SENSOR_CHAN_GAUGE_TIME_TO_EMPTY] =	"gauge_time_to_empty",
+	[SENSOR_CHAN_GAUGE_TIME_TO_FULL] =	"gauge_time_to_full",
+	[SENSOR_CHAN_GAUGE_CYCLE_COUNT] =	"gauge_cycle_count",
+	[SENSOR_CHAN_GAUGE_DESIGN_VOLTAGE] =	"gauge_design_voltage",
+	[SENSOR_CHAN_GAUGE_DESIRED_VOLTAGE] =	"gauge_desired_voltage",
+	[SENSOR_CHAN_GAUGE_DESIRED_CHARGING_CURRENT] =
+		 "gauge_desired_charging_current",
 };
 
-static int cmd_list_sensor_channels(const struct shell *shell,
-				   size_t argc, char *argv[])
+static int handle_channel_by_name(const struct shell *shell,
+					const struct device *dev,
+					const char *channel_name)
 {
-	int err;
-	struct device *dev;
 	struct sensor_value value[3];
+	char *endptr;
+	int err;
+	int i;
 
-	dev = device_get_binding(argv[1]);
+	/* Attempt to parse channel name as a number first */
+	i = strtoul(channel_name, &endptr, 0);
 
-	if (dev != NULL) {
-
-		err = sensor_sample_fetch(dev);
-		if (err) {
-			shell_error(shell, "sensor_sample_fetch failed err=%d",
-				    err);
-			return err;
-		}
-
-		for (unsigned int i = 0; i < SENSOR_CHAN_ALL; i++) {
-			if (!sensor_channel_get(dev, i, value)) {
-				shell_print(shell, "idx=%d name=%s",
-					    i, sensor_channel_name[i]);
+	if (*endptr != '\0') {
+		/* Channel name is not a number, look it up */
+		for (i = 0; i < ARRAY_SIZE(sensor_channel_name); i++) {
+			if (strcmp(channel_name, sensor_channel_name[i]) == 0) {
+				break;
 			}
 		}
 
+		if (i == ARRAY_SIZE(sensor_channel_name)) {
+			shell_error(shell, "Channel not supported (%s)",
+				    channel_name);
+			return -ENOTSUP;
+		}
+	}
+
+	err = sensor_channel_get(dev, i, value);
+	if (err < 0) {
+		return err;
+	}
+
+	if (i >= ARRAY_SIZE(sensor_channel_name)) {
+		shell_print(shell, "channel idx=%d value = %10.6f", i,
+			    sensor_value_to_double(&value[0]));
+	} else if (i != SENSOR_CHAN_ACCEL_XYZ &&
+		i != SENSOR_CHAN_GYRO_XYZ &&
+		i != SENSOR_CHAN_MAGN_XYZ) {
+		shell_print(shell,
+			"channel idx=%d %s = %10.6f", i,
+			sensor_channel_name[i],
+			sensor_value_to_double(&value[0]));
 	} else {
-		shell_error(shell, "Could not bind the %s sensor", argv[1]);
-		return -ENXIO;
+		shell_print(shell,
+			"channel idx=%d %s x = %10.6f y = %10.6f z = %10.6f",
+			i, sensor_channel_name[i],
+			sensor_value_to_double(&value[0]),
+			sensor_value_to_double(&value[1]),
+			sensor_value_to_double(&value[2]));
 	}
 
 	return 0;
 }
-
 static int cmd_get_sensor(const struct shell *shell, size_t argc, char *argv[])
 {
+	const struct device *dev;
 	int err;
-	struct device *dev;
-	struct sensor_value value[3];
-	int idx;
 
 	dev = device_get_binding(argv[1]);
+	if (dev == NULL) {
+		shell_error(shell, "Device unknown (%s)", argv[1]);
+		return -ENODEV;
+	}
 
-	if (dev != NULL) {
-		err = sensor_sample_fetch(dev);
-		if (err) {
-			shell_error(shell, "sensor_sample_fetch failed err=%d",
-				    err);
-			return err;
-		}
+	err = sensor_sample_fetch(dev);
+	if (err < 0) {
+		shell_error(shell, "Failed to read sensor: %d", err);
+	}
 
-		if (isdigit((unsigned char)argv[2][0])) {
-			idx = (u8_t)atoi(argv[2]);
-			if (!sensor_channel_get(dev, idx, value)) {
-				if (idx != SENSOR_CHAN_ACCEL_XYZ &&
-				    idx != SENSOR_CHAN_GYRO_XYZ &&
-				    idx != SENSOR_CHAN_MAGN_XYZ) {
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", idx,
-					    sensor_channel_name[idx],
-					    sensor_value_to_double(&value[0]));
-				} else {
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", idx,
-					    sensor_channel_name[idx],
-					    sensor_value_to_double(&value[0]));
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", idx,
-					    sensor_channel_name[idx],
-					    sensor_value_to_double(&value[1]));
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", idx,
-					    sensor_channel_name[idx],
-					    sensor_value_to_double(&value[2]));
-				}
-			} else {
-				shell_error(shell,
-					"Could not read channel idx %d=%s",
-					idx, sensor_channel_name[idx]);
-				return -EIO;
-			}
-			return 0;
-		}
-
-		for (unsigned int i = 0; i < SENSOR_CHAN_ALL; i++) {
-			if (!sensor_channel_get(dev, i, value)) {
-				if (i != SENSOR_CHAN_ACCEL_XYZ &&
-				    i != SENSOR_CHAN_GYRO_XYZ &&
-				    i != SENSOR_CHAN_MAGN_XYZ) {
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", i,
-					    sensor_channel_name[i],
-					    sensor_value_to_double(&value[0]));
-				} else {
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", i,
-					    sensor_channel_name[i],
-					    sensor_value_to_double(&value[0]));
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", i,
-					    sensor_channel_name[i],
-					    sensor_value_to_double(&value[1]));
-					shell_print(shell,
-					    "channel idx=%d %s = %10.6f", i,
-					    sensor_channel_name[i],
-					    sensor_value_to_double(&value[2]));
-				}
+	if (argc == 2) {
+		/* read all channels */
+		for (int i = 0; i < ARRAY_SIZE(sensor_channel_name); i++) {
+			if (sensor_channel_name[i]) {
+				handle_channel_by_name(shell, dev,
+							sensor_channel_name[i]);
 			}
 		}
-
 	} else {
-		shell_error(shell, "Could not bind the %s sensor", argv[1]);
-		return -ENXIO;
+		for (int i = 2; i < argc; i++) {
+			err = handle_channel_by_name(shell, dev, argv[i]);
+			if (err < 0) {
+				shell_error(shell,
+					"Failed to read channel (%s)", argv[i]);
+			}
+		}
 	}
 
 	return 0;
 }
 
-static int cmd_list_sensors(const struct shell *shell,
-			      size_t argc, char **argv)
+static void channel_name_get(size_t idx, struct shell_static_entry *entry);
+
+SHELL_DYNAMIC_CMD_CREATE(dsub_channel_name, channel_name_get);
+
+static void channel_name_get(size_t idx, struct shell_static_entry *entry)
 {
-	struct device *dev;
+	int cnt = 0;
 
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
+	entry->syntax = NULL;
+	entry->handler = NULL;
+	entry->help  = NULL;
+	entry->subcmd = &dsub_channel_name;
 
-	shell_print(shell, "devices:");
-	for (dev = __device_init_start; dev != __device_init_end; dev++) {
-		if (dev->driver_api != NULL) {
-			shell_print(shell, "- %s", dev->config->name);
+	for (int i = 0; i < SENSOR_CHAN_ALL; i++) {
+		if (sensor_channel_name[i] != NULL) {
+			if (cnt == idx) {
+				entry->syntax = sensor_channel_name[i];
+				break;
+			}
+			cnt++;
 		}
 	}
+}
 
-	return 0;
+static void device_name_get(size_t idx, struct shell_static_entry *entry);
+
+SHELL_DYNAMIC_CMD_CREATE(dsub_device_name, device_name_get);
+
+static void device_name_get(size_t idx, struct shell_static_entry *entry)
+{
+	const struct device *dev = shell_device_lookup(idx, NULL);
+
+	entry->syntax = (dev != NULL) ? dev->name : NULL;
+	entry->handler = NULL;
+	entry->help  = NULL;
+	entry->subcmd = &dsub_channel_name;
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_sensor,
-	SHELL_CMD_ARG(get, NULL, "<device_name> [chanel_idx]", cmd_get_sensor,
-		      2, 1),
-	SHELL_CMD(list, NULL, "List configured sensors", cmd_list_sensors),
-	SHELL_CMD_ARG(list_channels, NULL, "<device_name>",
-		  cmd_list_sensor_channels, 2, 0),
+	SHELL_CMD_ARG(get, &dsub_device_name, SENSOR_GET_HELP, cmd_get_sensor,
+			2, 255),
 	SHELL_SUBCMD_SET_END
 	);
 

@@ -15,22 +15,15 @@
 #define ONOFF
 #define GENERIC_LEVEL
 
-static u8_t tid;
-
-static u32_t button_read(struct device *port, u32_t pin)
-{
-	u32_t val = 0U;
-
-	gpio_pin_read(port, pin, &val);
-	return val;
-}
+static uint8_t tid;
 
 void publish(struct k_work *work)
 {
 	int err = 0;
 
 #ifndef ONE_LED_ONE_BUTTON_BOARD
-	if (button_read(button_device[0], DT_ALIAS_SW0_GPIOS_PIN) == 0U) {
+	if (gpio_pin_get(button_device[0],
+			 DT_GPIO_PIN(DT_ALIAS(sw0), gpios)) == 1) {
 #if defined(ONOFF)
 		bt_mesh_model_msg_init(root_models[3].pub->msg,
 				       BT_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK);
@@ -52,8 +45,8 @@ void publish(struct k_work *work)
 		net_buf_simple_add_u8(vnd_models[0].pub->msg, tid++);
 		err = bt_mesh_model_publish(&vnd_models[0]);
 #endif
-	} else if (button_read(button_device[1], DT_ALIAS_SW1_GPIOS_PIN) ==
-		   0U) {
+	} else if (gpio_pin_get(button_device[1],
+				DT_GPIO_PIN(DT_ALIAS(sw1), gpios)) == 1) {
 #if defined(ONOFF)
 		bt_mesh_model_msg_init(root_models[3].pub->msg,
 				       BT_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK);
@@ -75,8 +68,8 @@ void publish(struct k_work *work)
 		net_buf_simple_add_u8(vnd_models[0].pub->msg, tid++);
 		err = bt_mesh_model_publish(&vnd_models[0]);
 #endif
-	} else if (button_read(button_device[2], DT_ALIAS_SW2_GPIOS_PIN) ==
-		   0U) {
+	} else if (gpio_pin_get(button_device[2],
+				DT_GPIO_PIN(DT_ALIAS(sw2), gpios)) == 1) {
 #if defined(GENERIC_LEVEL)
 		bt_mesh_model_msg_init(root_models[5].pub->msg,
 				       BT_MESH_MODEL_OP_GEN_LEVEL_SET_UNACK);
@@ -146,8 +139,8 @@ void publish(struct k_work *work)
 		net_buf_simple_add_u8(root_models[16].pub->msg, tid++);
 		err = bt_mesh_model_publish(&root_models[16]);
 #endif
-	} else if (button_read(button_device[3], DT_ALIAS_SW3_GPIOS_PIN) ==
-		   0U) {
+	} else if (gpio_pin_get(button_device[3],
+				DT_GPIO_PIN(DT_ALIAS(sw3), gpios)) == 1) {
 #if defined(GENERIC_LEVEL)
 		bt_mesh_model_msg_init(root_models[5].pub->msg,
 				       BT_MESH_MODEL_OP_GEN_LEVEL_SET_UNACK);
@@ -215,9 +208,10 @@ void publish(struct k_work *work)
 #endif
 	}
 #else
-	if (button_read(button_device[0], DT_ALIAS_SW0_GPIOS_PIN) == 0U) {
+	if (gpio_pin_get(button_device[0],
+			 DT_GPIO_PIN(DT_ALIAS(sw0), gpios)) == 1) {
 #if defined(ONOFF)
-		static u8_t state = STATE_ON;
+		static uint8_t state = STATE_ON;
 
 		bt_mesh_model_msg_init(root_models[3].pub->msg,
 				       BT_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK);

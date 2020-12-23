@@ -16,6 +16,7 @@
 #include <spinlock.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <sys/check.h>
 
 #define WORKQUEUE_THREAD_NAME	"workqueue"
 
@@ -45,24 +46,19 @@ static void work_timeout(struct _timeout *t)
 	k_work_submit_to_queue(w->work_q, &w->work);
 }
 
-void k_delayed_work_init(struct k_delayed_work *work, k_work_handler_t handler)
-{
-	k_work_init(&work->work, handler);
-	z_init_timeout(&work->timeout);
-	work->work_q = NULL;
-}
-
 static int work_cancel(struct k_delayed_work *work)
 {
-	__ASSERT(work->work_q != NULL, "");
-
 	if (k_work_pending(&work->work)) {
 		/* Remove from the queue if already submitted */
 		if (!k_queue_remove(&work->work_q->queue, &work->work)) {
 			return -EINVAL;
 		}
 	} else {
-		(void)z_abort_timeout(&work->timeout);
+		int err = z_abort_timeout(&work->timeout);
+
+		if (err) {
+			return -EALREADY;
+		}
 	}
 
 	/* Detach from workqueue */
@@ -75,7 +71,7 @@ static int work_cancel(struct k_delayed_work *work)
 
 int k_delayed_work_submit_to_queue(struct k_work_q *work_q,
 				   struct k_delayed_work *work,
-				   s32_t delay)
+				   k_timeout_t delay)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = 0;
@@ -89,7 +85,14 @@ int k_delayed_work_submit_to_queue(struct k_work_q *work_q,
 	/* Cancel if work has been submitted */
 	if (work->work_q == work_q) {
 		err = work_cancel(work);
-		if (err < 0) {
+		/* -EALREADY may indicate the work has already completed so
+		 * this is likely a recurring work.  It may also indicate that
+		 * the work handler is still executing.  But it's neither
+		 * delayed nor pending, so it can be rescheduled.
+		 */
+		if (err == -EALREADY) {
+			err = 0;
+		} else if (err < 0) {
 			goto done;
 		}
 	}
@@ -100,15 +103,18 @@ int k_delayed_work_submit_to_queue(struct k_work_q *work_q,
 	/* Submit work directly if no delay.  Note that this is a
 	 * blocking operation, so release the lock first.
 	 */
-	if (delay == 0) {
+	if (K_TIMEOUT_EQ(delay, K_NO_WAIT)) {
 		k_spin_unlock(&lock, key);
 		k_work_submit_to_queue(work_q, &work->work);
 		return 0;
 	}
 
+#ifdef CONFIG_LEGACY_TIMEOUT_API
+	delay = _TICK_ALIGN + k_ms_to_ticks_ceil32(delay);
+#endif
+
 	/* Add timeout */
-	z_add_timeout(&work->timeout, work_timeout,
-		     _TICK_ALIGN + k_ms_to_ticks_ceil32(delay));
+	z_add_timeout(&work->timeout, work_timeout, delay);
 
 done:
 	k_spin_unlock(&lock, key);
@@ -117,15 +123,21 @@ done:
 
 int k_delayed_work_cancel(struct k_delayed_work *work)
 {
-	if (!work->work_q) {
-		return -EINVAL;
-	}
-
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	int ret = work_cancel(work);
+	int ret = -EINVAL;
+
+	if (work->work_q != NULL) {
+		ret = work_cancel(work);
+	}
 
 	k_spin_unlock(&lock, key);
 	return ret;
+}
+
+bool k_delayed_work_pending(struct k_delayed_work *work)
+{
+	return !z_is_inactive_timeout(&work->timeout) ||
+	       k_work_pending(&work->work);
 }
 
 #endif /* CONFIG_SYS_CLOCK_EXISTS */
